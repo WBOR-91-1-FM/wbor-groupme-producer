@@ -126,45 +126,58 @@ def publish_to_exchange(key, sub_key, data, alreadysent=False):
         logger.error("JSON encoding error for message %s: %s", data, json_error)
 
 
-@app.route("/send", methods=["GET"])
+@app.route("/send", methods=["POST"])
 def publish_message():
     """
-    Send a message from a browser address bar. Requires a password.
+    Send a message from a POST request.
+
+    Expects a valid JSON payload with the following:
+    - password: The password for the application (defined by APP_PASSWORD)
+    - text: The message body content
+    - bot_id: The bot ID the message was sent from
+    - statuscode: The status code for the message
+    - source: The source of the message
+    - alreadysent: A boolean indicating if the message has already been sent
     """
-    logger.info("Received request to send message from browser...")
+    payload = request.json
+    logger.info("Received request to send message with payload %s", payload)
+    if not payload:
+        logger.warning("Request payload missing or not in JSON format")
+        abort(400, "Request must contain a valid JSON payload")
+
     # Don't let strangers send messages as if they were us!
-    password = request.args.get("password")
+    password = payload.get("password")
     if password != APP_PASSWORD:
         abort(403, "Unauthorized access")
 
-    message = request.args.get("text")
-    bot_id = request.args.get("bot_id")
+    message = payload.get("text")
+    bot_id = payload.get("bot_id", "")
 
-    if not message or not bot_id:
-        logger.warning("Message body content or bot ID missing")
-        abort(400, "Message body text and bot ID is required")
+    if not message:
+        logger.warning("Message body content missing")
+        abort(400, "Message body text is required")
 
     # Queue the message for sending
     message_id = str(uuid4())  # Generate a unique ID for tracking
     outgoing_message = {
         "wbor_message_id": message_id,
         "text": message,
-        "statuscode": request.args.get("statuscode"),
+        "statuscode": payload.get("statuscode"),
         "bot_id": bot_id,
-        "source": request.args.get("source", SOURCE),
+        "source": payload.get("source", SOURCE),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    already_sent = request.args.get("alreadysent", "false").lower() == "true"
+    already_sent = payload.get("alreadysent", False)
 
     # If `alreadysent` is true, `statuscode` must be provided
-    code = request.args.get("statuscode")
+    code = payload.get("statuscode")
     if already_sent and not code:
         logger.warning("Message already sent but no code provided")
         abort(400, "Code is required if message has already been sent")
 
     publish_to_exchange(SOURCE, "test", outgoing_message, alreadysent=already_sent)
-    logger.info("Message queued for sending. UID: %s", message_id)
+    logger.info("Message queued for sending: %s", message_id)
     return "Message queued for sending"
 
 
