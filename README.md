@@ -2,6 +2,8 @@
 
 Heavily WIP
 
+Text only - no images.
+
 Docker container that serves to publish GroupMe messages to our RabbitMQ exchange.
 
 * Local API that the producing party (e.g. ENDEC Newsfeed, `apcupsd`) uses to make the request.

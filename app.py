@@ -38,7 +38,7 @@ def terminate(exit_code=1):
     os._exit(exit_code)  # Current thread
 
 
-def publish_to_exchange(key, sub_key, data):
+def publish_to_exchange(key, sub_key, data, alreadysent=False):
     """
     Publishes a message to a RabbitMQ exchange.
 
@@ -67,6 +67,11 @@ def publish_to_exchange(key, sub_key, data):
             durable=True,
         )
 
+        # Set headers for message
+        headers = {"x-retry-count": 0}  # Initialize retry count for other consumers
+        if alreadysent:
+            headers["alreadysent"] = True
+
         # Publish message to exchange
         channel.basic_publish(
             exchange=RABBITMQ_EXCHANGE,
@@ -75,9 +80,7 @@ def publish_to_exchange(key, sub_key, data):
                 {**data, "type": sub_key}  # Include type in the message body
             ).encode(),  # Encodes msg as bytes. RabbitMQ requires byte data
             properties=pika.BasicProperties(
-                headers={
-                    "x-retry-count": 0
-                },  # Initialize retry count for other consumers
+                headers=headers,
                 delivery_mode=2,  # Persistent message - write to disk for safety
             ),
         )
@@ -89,7 +92,7 @@ def publish_to_exchange(key, sub_key, data):
             RABBITMQ_EXCHANGE,
             key,
             sub_key,
-            data.get("message"),
+            data.get("text"),
             data.get("wbor_message_id"),
         )
         connection.close()
@@ -134,21 +137,33 @@ def publish_message():
     if password != APP_PASSWORD:
         abort(403, "Unauthorized access")
 
-    message = request.args.get("body")
+    message = request.args.get("text")
+    bot_id = request.args.get("bot_id")
 
-    if not message:
-        logger.warning("Message body content missing")
-        abort(400, "Message body text is required")
+    if not message or not bot_id:
+        logger.warning("Message body content or bot ID missing")
+        abort(400, "Message body text and bot ID is required")
 
     # Queue the message for sending
     message_id = str(uuid4())  # Generate a unique ID for tracking
     outgoing_message = {
         "wbor_message_id": message_id,
-        "body": message,
+        "text": message,
+        "statuscode": request.args.get("statuscode"),
+        "bot_id": bot_id,
         "source": request.args.get("source", SOURCE),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    publish_to_exchange(SOURCE, "test", outgoing_message)
+
+    already_sent = request.args.get("alreadysent", "false").lower() == "true"
+
+    # If `alreadysent` is true, `statuscode` must be provided
+    code = request.args.get("statuscode")
+    if already_sent and not code:
+        logger.warning("Message already sent but no code provided")
+        abort(400, "Code is required if message has already been sent")
+
+    publish_to_exchange(SOURCE, "test", outgoing_message, alreadysent=already_sent)
     logger.info("Message queued for sending. UID: %s", message_id)
     return "Message queued for sending"
 
