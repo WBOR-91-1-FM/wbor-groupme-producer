@@ -52,7 +52,6 @@ def publish_to_exchange(key, sub_key, data, alreadysent=False):
         credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
         parameters = pika.ConnectionParameters(
             host=RABBITMQ_HOST,
-            port=5672,
             credentials=credentials,
             client_properties={"connection_name": "GroupMeProducerConnection"},
         )
@@ -67,6 +66,11 @@ def publish_to_exchange(key, sub_key, data, alreadysent=False):
             durable=True,
         )
 
+        # Declare a temporary queue for acknowledgment
+        result = channel.queue_declare(queue="", exclusive=True)
+        callback_queue = result.method.queue
+        correlation_id = data.get("wbor_message_id") or str(uuid4())
+
         # Set headers for message
         headers = {"x-retry-count": 0}  # Initialize retry count for other consumers
         if alreadysent:
@@ -80,21 +84,42 @@ def publish_to_exchange(key, sub_key, data, alreadysent=False):
                 {**data, "type": sub_key}  # Include type in the message body
             ).encode(),  # Encodes msg as bytes. RabbitMQ requires byte data
             properties=pika.BasicProperties(
+                reply_to=callback_queue,
+                correlation_id=correlation_id,
                 headers=headers,
                 delivery_mode=2,  # Persistent message - write to disk for safety
             ),
         )
         logger.debug(
-            "Publishing message body: %s", json.dumps({**data, "type": sub_key})
+            "Publishing message body with Correlation ID `%s`: %s",
+            correlation_id,
+            json.dumps({**data, "type": sub_key}),
         )
         logger.info(
-            "Published message to `%s` with routing key: `source.%s.%s`: %s - UID: %s",
+            "Published message to `%s` (corr: `%s`) with routing key: `source.%s.%s`: %s - %s",
             RABBITMQ_EXCHANGE,
+            correlation_id,
             key,
             sub_key,
             data.get("text"),
             data.get("wbor_message_id"),
         )
+
+        def on_ack(ch, _method, properties, body):
+            if properties.correlation_id == correlation_id:
+                logger.info(
+                    "Acknowledgment received for message with Correlation ID `%s`: %s",
+                    correlation_id,
+                    body.decode(),
+                )
+                ch.stop_consuming()
+
+        # Listen for acknowledgment
+        channel.basic_consume(
+            queue=callback_queue, on_message_callback=on_ack, auto_ack=True
+        )
+        channel.start_consuming()
+
         connection.close()
     except AMQPConnectionError as conn_error:
         error_message = str(conn_error)
