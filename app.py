@@ -7,6 +7,7 @@ import json
 import sys
 import os
 import signal
+import threading
 from datetime import datetime, timezone
 from uuid import uuid4
 import pika
@@ -105,21 +106,42 @@ def publish_to_exchange(key, sub_key, data, alreadysent=False):
             data.get("wbor_message_id"),
         )
 
+        ack_received = threading.Event()
+
         def on_ack(ch, _method, properties, body):
             if properties.correlation_id == correlation_id:
-                logger.info(
+                logger.debug(
                     "Acknowledgment received for message with Correlation ID `%s`: %s",
                     correlation_id,
                     body.decode(),
                 )
+                ack_received.set()
                 ch.stop_consuming()
 
         # Listen for acknowledgment
         channel.basic_consume(
             queue=callback_queue, on_message_callback=on_ack, auto_ack=True
         )
-        channel.start_consuming()
 
+        # Start consuming in a separate thread
+        def consume():
+            channel.start_consuming()
+
+        consumer_thread = threading.Thread(target=consume)
+        consumer_thread.start()
+
+        # Wait for acknowledgment with a timeout
+        if not ack_received.wait(timeout=5):  # 5-second timeout
+            logger.warning(
+                "No acknowledgment received for message with Correlation ID `%s` within 5 seconds",
+                correlation_id,
+            )
+            # TODO: Take action, e.g., retry and add failure log to queue
+            logger.critical("Message delivery failed.")
+            ack_received.set()  # Ensure the consumer thread stops
+            channel.stop_consuming()
+
+        consumer_thread.join()
         connection.close()
     except AMQPConnectionError as conn_error:
         error_message = str(conn_error)
@@ -202,8 +224,8 @@ def publish_message():
         abort(400, "Code is required if message has already been sent")
 
     publish_to_exchange(SOURCE, "test", outgoing_message, alreadysent=already_sent)
-    logger.info("Message queued for sending: %s", message_id)
-    return "Message queued for sending"
+    logger.info("Message sent!: %s", message_id)
+    return "Message sent!"
 
 
 @app.route("/")
