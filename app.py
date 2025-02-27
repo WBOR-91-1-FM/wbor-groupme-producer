@@ -92,12 +92,12 @@ def publish_to_exchange(key, sub_key, data, alreadysent=False):
             ),
         )
         logger.debug(
-            "Publishing message body with Correlation ID `%s`: %s",
+            "Publishing message body with Correlation ID `%s`: `%s`",
             correlation_id,
             json.dumps({**data, "type": sub_key}),
         )
         logger.info(
-            "Published message to `%s` (corr: `%s`) with routing key: `source.%s.%s`: %s - %s",
+            "Published message to `%s` (corr: `%s`) with routing key: `source.%s.%s`: `%s` - `%s`",
             RABBITMQ_EXCHANGE,
             correlation_id,
             key,
@@ -111,7 +111,7 @@ def publish_to_exchange(key, sub_key, data, alreadysent=False):
         def on_ack(ch, _method, properties, body):
             if properties.correlation_id == correlation_id:
                 logger.debug(
-                    "Acknowledgment received for message with Correlation ID `%s`: %s",
+                    "Acknowledgment received for message with Correlation ID `%s`: `%s`",
                     correlation_id,
                     body.decode(),
                 )
@@ -147,7 +147,7 @@ def publish_to_exchange(key, sub_key, data, alreadysent=False):
         error_message = str(conn_error)
         logger.error(
             "Connection error when publishing to `%s` with routing key "
-            "`source.%s.%s`: %s",
+            "`source.%s.%s`: `%s`",
             RABBITMQ_EXCHANGE,
             key,
             sub_key,
@@ -163,7 +163,7 @@ def publish_to_exchange(key, sub_key, data, alreadysent=False):
         terminate()
     except AMQPChannelError as chan_error:
         logger.error(
-            "Channel error when publishing to `%s` with routing key `source.%s.%s`: %s",
+            "Channel error when publishing to `%s` with routing key `source.%s.%s`: `%s`",
             RABBITMQ_EXCHANGE,
             key,
             sub_key,
@@ -224,7 +224,7 @@ def publish_message():
         abort(400, "Code is required if message has already been sent")
 
     publish_to_exchange(SOURCE, "test", outgoing_message, alreadysent=already_sent)
-    logger.info("Message sent!: %s", message_id)
+    logger.info("Message sent!: `%s`", message_id)
     return "Message sent!"
 
 
